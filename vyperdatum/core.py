@@ -657,8 +657,7 @@ class DatumData:
             raise ValueError(f'VDatum is not found at the provided path: {self.vdatum_path}')
 
         # special case for vdatum directory, we want to give pyproj the new path if it isn't there already
-        orig_proj_paths = datadir.get_data_dir()
-        if vdatum_path not in orig_proj_paths:
+        if not proj_data_dir_contains(vdatum_path):
             datadir.append_data_dir(vdatum_path)
     
         # also want to populate grids and polygons with what we find
@@ -725,12 +724,11 @@ class DatumData:
         """
 
         self.extended_region = {}
-        orig_proj_paths = datadir.get_data_dir()
         for entry in config.keys():
             if entry.endswith('_path') and entry != 'vdatum_path':
                 new_path = config[entry]
                 if os.path.exists(new_path):
-                    if new_path not in orig_proj_paths:
+                    if not proj_data_dir_contains(new_path):
                         datadir.append_data_dir(new_path)
                     other_grids, other_regions = get_grid_list(new_path)
                     self.extended_region_lookup[entry] = []
@@ -842,6 +840,26 @@ class DatumData:
             geoid_frame = self.extended_region[region_name]['reference_frame']
 
         return geoid_frame
+
+
+def proj_data_dir_contains(directory: str) -> bool:
+    """
+    Check if the provided directory is already one of the pyproj data directories.  Compares whole entries rather
+    than doing a substring check, so '/data/vdatum' is not mistaken for '/data/vdatum_old'.
+
+    Parameters
+    ----------
+    directory
+        absolute folder path
+
+    Returns
+    -------
+    bool
+        True if the directory is already in the pyproj data directory list
+    """
+
+    proj_paths = [os.path.normcase(os.path.normpath(pth)) for pth in datadir.get_data_dir().split(os.pathsep) if pth]
+    return os.path.normcase(os.path.normpath(directory)) in proj_paths
 
 
 def get_grid_list(vdatum_directory: str):

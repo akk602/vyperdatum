@@ -1056,7 +1056,8 @@ def is_valid_regional_pipeline(pipeline: str) -> bool:
     bool
         True if the pipeline is valid
     str
-        corrected pipeline string if we found that the default extension (gtx) was incorrect
+        corrected pipeline string if we found that the default extension (gtx) was incorrect, with grid paths
+        using '/' instead of '\\' on platforms where '\\' is not a path separator
     """
 
     parts = pipeline.split()
@@ -1064,6 +1065,12 @@ def is_valid_regional_pipeline(pipeline: str) -> bool:
     for part in parts:
         if part.startswith('grids='):
             prefix, grid = part.split('=')
+            if os.sep != '\\':
+                # grid paths are defined with Windows separators (pipeline.datum_definition, geoid lookups).  Neither
+                #   os.path nor PROJ treat '\' as a separator on Linux/macOS, so convert them to '/'.
+                posix_grid = grid.replace('\\', '/')
+                pipeline = pipeline.replace(part, f'{prefix}={posix_grid}')
+                grid = posix_grid
             grid_list.append(grid)
     paths = pyproj.datadir.get_data_dir()
     path_list = paths.split(os.pathsep)

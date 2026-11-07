@@ -9,6 +9,11 @@ data_folder = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
 vdatum_answer = vdatum_answers[gvc.datum_data.vdatum_version]
 
 
+def _native_grids(pipeline: str) -> str:
+    # vypercrs.is_valid_regional_pipeline converts grid paths to '/' on platforms where '\\' is not a separator
+    return pipeline.replace('\\', '/') if os.sep != '\\' else pipeline
+
+
 def test_core_setup():
     # these tests assume you have the vdatum path setup in VyperCore
     # first time, you need to run it with the path to the vdatum folder, vc = VyperCore('path\to\vdatum')
@@ -61,12 +66,12 @@ def test_set_input_datum():
     vc.set_input_datum('mllw')
 
     assert vc.in_crs.vyperdatum_str == 'mllw'
-    assert vc.in_crs.pipeline_string == '[+proj=pipeline +step +proj=vgridshift grids=core\\geoid12b\\g2012bu0.gtx ' \
+    assert vc.in_crs.pipeline_string == _native_grids('[+proj=pipeline +step +proj=vgridshift grids=core\\geoid12b\\g2012bu0.gtx ' \
                                         '+step +inv +proj=vgridshift grids=NCcoast11_8301\\tss.gtx ' \
                                         '+step +proj=vgridshift grids=NCcoast11_8301\\mllw.gtx;' \
                                         '+proj=pipeline +step +proj=vgridshift grids=core\\geoid12b\\g2012bu0.gtx ' \
                                         '+step +inv +proj=vgridshift grids=NCinner11_8301\\tss.gtx ' \
-                                        '+step +proj=vgridshift grids=NCinner11_8301\\mllw.gtx]'
+                                        '+step +proj=vgridshift grids=NCinner11_8301\\mllw.gtx]')
 
     assert len(vc.regions) == 2
     assert vc.regions[0].find('NCcoast') != -1
@@ -80,7 +85,7 @@ def test_set_output_datum():
     vc.set_output_datum('geoid')
 
     assert vc.out_crs.vyperdatum_str == 'geoid'
-    assert vc.out_crs.pipeline_string == '[+proj=pipeline +step +proj=vgridshift grids=core\\geoid12b\\g2012bu0.gtx;+proj=pipeline +step +proj=vgridshift grids=core\\geoid12b\\g2012bu0.gtx]'
+    assert vc.out_crs.pipeline_string == _native_grids('[+proj=pipeline +step +proj=vgridshift grids=core\\geoid12b\\g2012bu0.gtx;+proj=pipeline +step +proj=vgridshift grids=core\\geoid12b\\g2012bu0.gtx]')
     assert len(vc.regions) == 2
     assert vc.regions[0].find('NCcoast') != -1
     assert vc.regions[1].find('NCinner') != -1
