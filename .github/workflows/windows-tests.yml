@@ -11,7 +11,7 @@ env:
   UPSTREAM_MAIN: 2423806c7abb12fbb2a30d6a25dd996ce965917d
   BRANCHES: >-
     feature/ngvd29-nad27-support fix/auto-steps-noop fix/transform-points-finally
-    fix/vrbag-all-subgrids fix/callers-check-success fix/out-of-coverage-points
+    fix/vrbag-all-subgrids fix/callers-check-success-v2 fix/out-of-coverage-points-v2
 
 jobs:
   grids:
@@ -50,8 +50,8 @@ jobs:
           - fix/auto-steps-noop
           - fix/transform-points-finally
           - fix/vrbag-all-subgrids
-          - fix/callers-check-success
-          - fix/out-of-coverage-points
+          - fix/callers-check-success-v2
+          - fix/out-of-coverage-points-v2
           - combined
     runs-on: ${{ matrix.os }}
     defaults:
@@ -81,6 +81,8 @@ jobs:
             pyproj=3.7 numpy pandas geopandas pyogrio h5py lxml laspy lazrs-python python-pdal
             pyarrow tqdm colorama requests pydantic networkx shapely pytest
           cache-environment: true
+      - name: Install vyperdatum (no deps; the package reads its own version metadata)
+        run: python -m pip install --no-deps --no-build-isolation -e .
       - name: Versions
         run: |
           python -c "import sys, pyproj, osgeo, numpy; print(sys.version); print('pyproj', pyproj.__version__, 'PROJ', pyproj.proj_version_str); print('GDAL', osgeo.__version__, 'numpy', numpy.__version__)"
@@ -96,7 +98,8 @@ jobs:
           echo "pytest exit code: $?"
           tail -n 120 pytest.log
           { echo "### ${{ matrix.ref }} on ${{ matrix.os }}"; echo '```'; grep -E "^(FAILED|ERROR) |passed|failed" pytest.log | sed 's/ - .*//'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          exit 0
+          # Known-failing tests are expected; a run where nothing passes means the setup is broken.
+          grep -qE "[0-9]+ passed" pytest.log || { echo "No tests passed: broken environment"; exit 1; }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
