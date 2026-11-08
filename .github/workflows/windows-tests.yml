@@ -1,0 +1,108 @@
+# Runs the test suite of each open PR branch on Windows and Ubuntu, against
+# upstream main as a baseline. Not part of any PR; lives only on this branch.
+name: PR branch tests
+
+on:
+  push:
+    branches: [ci/windows-tests]
+  workflow_dispatch:
+
+env:
+  UPSTREAM_MAIN: 2423806c7abb12fbb2a30d6a25dd996ce965917d
+  BRANCHES: >-
+    feature/ngvd29-nad27-support fix/auto-steps-noop fix/transform-points-finally
+    fix/vrbag-all-subgrids fix/callers-check-success fix/out-of-coverage-points
+
+jobs:
+  grids:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Fetch proj.db and grids from Zenodo record 18893503
+        run: |
+          mkdir -p grids
+          python tools/extract.py grids proj.db \
+            us_noaa_g2012bu0.tif us_noaa_g2018u0.tif \
+            "us_noaa_nos_MLLW-NAD83(2011)_2010.0_(nwldatum_4.7.0_20240621).tif" \
+            "us_noaa_nos_CRD-NAD83(2011)_2010.0_(nwldatum_4.7.0_20240621).tif" \
+            "us_noaa_nos_LWD-NAD83(2011)_2010.0_(nwldatum_4.7.0_20240621).tif" \
+            "us_noaa_nos_LWD_IGLD85-NAD83(2011)_2010.0_(nwldatum_4.7.0_20240621).tif" \
+            "us_noaa_nos_survey_hydroid-NAD83(2011)_2010.0_(usace_1.0.0_20250501).tif" \
+            "us_noaa_nos_underkeel_hydroid-NAD83(2011)_2010.0_(nwldatum_4.7.0_20240621).tif"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grids
+          path: grids
+          retention-days: 3
+
+  test:
+    needs: grids
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        ref:
+          - main
+          - feature/ngvd29-nad27-support
+          - fix/auto-steps-noop
+          - fix/transform-points-finally
+          - fix/vrbag-all-subgrids
+          - fix/callers-check-success
+          - fix/out-of-coverage-points
+          - combined
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ (matrix.ref == 'main' || matrix.ref == 'combined') && env.UPSTREAM_MAIN || matrix.ref }}
+          fetch-depth: 0
+      - name: Merge all PR branches (combined only)
+        if: matrix.ref == 'combined'
+        run: |
+          git config user.email ci@example.com
+          git config user.name ci
+          for b in $BRANCHES; do git merge --no-edit "origin/$b"; done
+          git log --oneline -1
+      - uses: actions/download-artifact@v4
+        with:
+          name: grids
+          path: ${{ runner.temp }}/grids
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: vd
+          create-args: >-
+            -c conda-forge python=3.11 proj=9.6 libgdal-core=3.11 gdal=3.11 libgdal-hdf5
+            pyproj=3.7 numpy pandas geopandas pyogrio h5py lxml laspy lazrs-python python-pdal
+            pyarrow tqdm colorama requests pydantic networkx shapely pytest
+          cache-environment: true
+      - name: Versions
+        run: |
+          python -c "import sys, pyproj, osgeo, numpy; print(sys.version); print('pyproj', pyproj.__version__, 'PROJ', pyproj.proj_version_str); print('GDAL', osgeo.__version__, 'numpy', numpy.__version__)"
+          which projinfo
+      - name: Tests
+        env:
+          VYPER_GRIDS: ${{ runner.temp }}/grids
+        run: |
+          set +e
+          echo "${{ matrix.ref }} ${{ matrix.os }}" > ref.txt
+          python -m pytest -p no:cacheprovider --continue-on-collection-errors -rfE tests \
+            --junitxml=junit.xml > pytest.log 2>&1
+          echo "pytest exit code: $?"
+          tail -n 120 pytest.log
+          { echo "### ${{ matrix.ref }} on ${{ matrix.os }}"; echo '```'; grep -E "^(FAILED|ERROR) |passed|failed" pytest.log | sed 's/ - .*//'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.os }}-${{ strategy.job-index }}
+          path: |
+            ref.txt
+            pytest.log
+            junit.xml
+          retention-days: 7
