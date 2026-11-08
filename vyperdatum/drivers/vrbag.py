@@ -469,6 +469,28 @@ def subgrid_raster_transform(fname: str,
     return start_indices, transformed_refs
 
 
+def parse_metadata(bag: h5py.File) -> etree._ElementTree:
+    """
+    Parse the XML metadata of an open BAG file.
+
+    The metadata is stored as an array of bytes. Some writers end it with NUL bytes (GDAL's
+    sample VR BAG, for example), which lxml rejects with "Extra content at the end of the
+    document", so they are removed first.
+
+    Parameters
+    ----------
+    bag : h5py.File
+        The open BAG file.
+
+    Returns
+    ----------
+    lxml.etree._ElementTree
+        The parsed metadata.
+    """
+    metadata = np.asarray(bag["BAG_root/metadata"][()]).tobytes().rstrip(b"\x00")
+    return etree.parse(BytesIO(metadata))
+
+
 def corner_points(fname: str) -> tuple[float, float, float, float]:
     """
     Return the corner points indicated in the xml metadata.
@@ -484,9 +506,7 @@ def corner_points(fname: str) -> tuple[float, float, float, float]:
         corner points: x1, y1, x2, y2
     """
     bag = h5py.File(fname)
-    meta = bag["BAG_root/metadata"]
-    buffer = BytesIO(meta[()])
-    tree = etree.parse(buffer)
+    tree = parse_metadata(bag)
     root = tree.getroot()
     gml = ".//{" + root.nsmap['gml'] + "}"
     p1, p2 = root.find(f"{gml}coordinates").text.split(" ")
@@ -519,9 +539,7 @@ def change_corner_points_and_wkt(fname: str,
     None
     """
     bag = h5py.File(fname)
-    meta = bag["BAG_root/metadata"]
-    buffer = BytesIO(meta[()])
-    tree = etree.parse(buffer)
+    tree = parse_metadata(bag)
     root = tree.getroot()
     gml = ".//{" + root.nsmap['gml'] + "}"
     gco = ".//{" + root.nsmap['gco'] + "}"
