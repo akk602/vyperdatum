@@ -593,12 +593,12 @@ def update_vr_refinements(fname: str,
     # failed transformation leaves the file unchanged.
     zt = base_grid_point_transform(fname=fname, tf=tf, nodata_value=vrb_enum.NDV_REF.value)
     x1, y1, x2, y2 = corner_points(fname=fname)
-    # _, y1, x1, _ = tf.transform_points([y1], [x1], [0], always_xy=False, allow_ballpark=False)
-    # _, y2, x2, _ = tf.transform_points([y2], [x2], [0], always_xy=False, allow_ballpark=False)
-    success1, x1, y1, _ = tf.transform_points([y1], [x1], [0],
-                                              always_xy=False, allow_ballpark=False)
-    success2, x2, y2, _ = tf.transform_points([y2], [x2], [0],
-                                              always_xy=False, allow_ballpark=False)
+    # The metadata stores the corners as x,y (easting,northing for projected CRSs), so use
+    # always_xy: with the CRS's own axis order, swapping them only suits a lat/lon CRS.
+    success1, x1, y1, _ = tf.transform_points([x1], [y1], [0],
+                                              always_xy=True, allow_ballpark=False)
+    success2, x2, y2, _ = tf.transform_points([x2], [y2], [0],
+                                              always_xy=True, allow_ballpark=False)
     if not (success1 and success2):
         raise ValueError(f"Point transformation of the VR BAG corner points failed for {fname}.")
     # using old WKT1_GDAL for compatibility with older GDAL/QGIS. Some CRSs (EPSG:6319,
