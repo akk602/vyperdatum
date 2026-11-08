@@ -10,7 +10,7 @@ on:
 env:
   UPSTREAM_MAIN: 2423806c7abb12fbb2a30d6a25dd996ce965917d
   BRANCHES: >-
-    feature/ngvd29-nad27-support fix/auto-steps-noop fix/transform-points-finally
+    feature/ngvd29-nad27-support fix/auto-steps-noop fix/transform-points-finally-win
     fix/vrbag-all-subgrids fix/callers-check-success-v2 fix/out-of-coverage-points-v2
 
 jobs:
@@ -48,7 +48,7 @@ jobs:
           - main
           - feature/ngvd29-nad27-support
           - fix/auto-steps-noop
-          - fix/transform-points-finally
+          - fix/transform-points-finally-win
           - fix/vrbag-all-subgrids
           - fix/callers-check-success-v2
           - fix/out-of-coverage-points-v2
