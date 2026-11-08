@@ -446,7 +446,9 @@ def vdatum_cross_validate(s_wkt: str,
                                                        pivot_h_crs=pivot_h_crs
                                                        )
     else:
-        random_idx = random.sample(range(len(s_point_samples)), n_sample)
+        # Inputs with fewer points than n_sample are checked in full.
+        random_idx = random.sample(range(len(s_point_samples)),
+                                   min(n_sample, len(s_point_samples)))
         source_samples = [list(s_point_samples[i]) for i in random_idx]
         target_samples = [list(t_point_samples[i]) for i in random_idx]
 
