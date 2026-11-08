@@ -514,6 +514,10 @@ class Transformer():
             success = vrbag.transform(fname=output_file,
                                       tf=self, point_transformation=True,
                                       vdatum_check=vdatum_check)
+            if not success:
+                # vrbag.transform() logs its error and returns False instead of raising.
+                # Raise here so the output copy is removed below, as for the other formats.
+                raise ValueError(f"VR BAG transformation failed for {input_file}.")
             if pre_post_checks:
                 drivers_utils.vrbag_post_transformation_checks(file_path=output_file,
                                                                target_crs=self.crs_to
