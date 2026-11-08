@@ -109,7 +109,7 @@ def base_grid_point_transform(fname: str,
             y = np.append(y, [_y])
             z = np.append(z, vr_elev[i, j])
 
-    success, _, _, zz = tf.transform_points(x, y, z)
+    success, _, _, zz = tf.transform_points(x, y, z, always_xy=True)
     ds_gdal = None
     bag.close()
     if not success:
@@ -249,7 +249,7 @@ def single_subgrid_point_transform(fname: str,
         if start is None:
             # `get_subgrid_points()` already logged its error; the caller skips this subgrid.
             return None, None
-        success, _, _, zz = tf.transform_points(x, y, z)
+        success, _, _, zz = tf.transform_points(x, y, z, always_xy=True)
     except Exception as e:
         logger.exception(f"Unexpected exception in single_subgrid_point_transform for subgrid {i}, {j}: {e}")
         f = open("error.txt", "a")
@@ -469,6 +469,28 @@ def subgrid_raster_transform(fname: str,
     return start_indices, transformed_refs
 
 
+def parse_metadata(bag: h5py.File) -> etree._ElementTree:
+    """
+    Parse the XML metadata of an open BAG file.
+
+    The metadata is stored as an array of bytes. Some writers end it with a NUL byte (GDAL,
+    for example), which lxml rejects with "Extra content at the end of the document". Like
+    GDAL, read it only up to the first NUL.
+
+    Parameters
+    ----------
+    bag : h5py.File
+        The open BAG file.
+
+    Returns
+    ----------
+    lxml.etree._ElementTree
+        The parsed metadata.
+    """
+    metadata = np.asarray(bag["BAG_root/metadata"][()]).tobytes().split(b"\x00", 1)[0]
+    return etree.parse(BytesIO(metadata))
+
+
 def corner_points(fname: str) -> tuple[float, float, float, float]:
     """
     Return the corner points indicated in the xml metadata.
@@ -484,15 +506,100 @@ def corner_points(fname: str) -> tuple[float, float, float, float]:
         corner points: x1, y1, x2, y2
     """
     bag = h5py.File(fname)
-    meta = bag["BAG_root/metadata"]
-    buffer = BytesIO(meta[()])
-    tree = etree.parse(buffer)
+    tree = parse_metadata(bag)
     root = tree.getroot()
     gml = ".//{" + root.nsmap['gml'] + "}"
     p1, p2 = root.find(f"{gml}coordinates").text.split(" ")
     x1, y1 = p1.split(",")
     x2, y2 = p2.split(",")
     return float(x1), float(y1), float(x2), float(y2) 
+
+
+def updated_metadata(fname: str,
+                     new_points: str,
+                     wkt_h: str,
+                     wkt_v: str
+                     ) -> str:
+    """
+    Return the VR BAG's xml metadata with new corner points and horizontal and vertical
+    WKTs, without writing it.
+
+    The WKTs go into the `code` of the first and second `RS_Identifier` (horizontal and
+    vertical reference systems), and their `codeSpace` is set to "WKT". They are found by
+    their path, because the number of other `gco:CharacterString` elements before them
+    differs between BAG writers.
+
+    Parameters
+    ----------
+    fname : str
+        Absolute path to the vrbag file.
+    new_points: str
+        The new corners points in string format x1,y1 x2,y2.
+    wkt_h: str
+        WKT string for the horizontal component of the CRS.
+    wkt_v: str
+        WKT string for the vertical component of the CRS.
+
+    Raises
+    ----------
+    ValueError:
+        If the metadata has no corner points, or not two reference systems with a code and
+        a codeSpace.
+
+    Returns
+    ----------
+    str
+        The updated xml metadata.
+    """
+    with h5py.File(fname) as bag:
+        root = parse_metadata(bag).getroot()
+    coordinates = root.find(".//{" + root.nsmap['gml'] + "}coordinates")
+    if coordinates is None:
+        raise ValueError(f"No corner points (gml:coordinates) in the metadata of {fname}.")
+    coordinates.text = new_points
+    identifiers = root.xpath("//*[local-name()='RS_Identifier']")
+    if len(identifiers) < 2:
+        raise ValueError(f"Expected horizontal and vertical reference systems in the metadata "
+                         f"of {fname}, found {len(identifiers)}.")
+    for identifier, wkt in zip(identifiers[:2], (wkt_h, wkt_v)):
+        code = identifier.xpath("./*[local-name()='code']/*[local-name()='CharacterString']")
+        code_space = identifier.xpath("./*[local-name()='codeSpace']"
+                                      "/*[local-name()='CharacterString']")
+        if not code or not code_space:
+            raise ValueError(f"A reference system in the metadata of {fname} has no code or "
+                             "codeSpace.")
+        code[0].text = wkt
+        code_space[0].text = "WKT"
+    return etree.tostring(root).decode()
+
+
+def write_metadata(fname: str, xmet: str) -> None:
+    """
+    Replace the VR BAG's xml metadata with `xmet`.
+
+    Parameters
+    ----------
+    fname : str
+        Absolute path to the vrbag file.
+    xmet: str
+        The xml metadata.
+
+    Returns
+    ----------
+    None
+    """
+    bag = h5py.File(fname, mode="r+")
+    root = bag.require_group("/BAG_root")
+    del bag["/BAG_root/metadata"]
+    metadata = np.array(list(xmet), dtype="S1")
+    root.create_dataset("metadata",
+                        maxshape=(None,),
+                        data=metadata,
+                        compression="gzip",
+                        compression_opts=9
+                        )
+    bag.close()
+    return
 
 
 def change_corner_points_and_wkt(fname: str,
@@ -508,43 +615,17 @@ def change_corner_points_and_wkt(fname: str,
     fname : str
         Absolute path to the vrbag file.
     new_points: str
-        The new corners points in string format x1,y1 x2,y2. Will be ignored when None.
+        The new corners points in string format x1,y1 x2,y2.
     wkt_h: str
-        WKT string for the horizontal component of the CRS. Will be ignored when None.
+        WKT string for the horizontal component of the CRS.
     wkt_v: str
-        WKT string for the vertical component of the CRS. Will be ignored when None.
+        WKT string for the vertical component of the CRS.
 
     Returns
     ----------
     None
     """
-    bag = h5py.File(fname)
-    meta = bag["BAG_root/metadata"]
-    buffer = BytesIO(meta[()])
-    tree = etree.parse(buffer)
-    root = tree.getroot()
-    gml = ".//{" + root.nsmap['gml'] + "}"
-    gco = ".//{" + root.nsmap['gco'] + "}"
-    root.find(f"{gml}coordinates").text = new_points
-    root.findall(f"{gco}CharacterString")[6].text = wkt_h
-    root.findall(f"{gco}CharacterString")[7].text = "WKT"
-    root.findall(f"{gco}CharacterString")[8].text = wkt_v
-    root.findall(f"{gco}CharacterString")[9].text = "WKT"
-    # tree.write(xml_fname)
-    # xml = etree.tostring(root, pretty_print=True).decode("ascii")
-    xmet = etree.tostring(root).decode()
-    bag.close()
-    bag = h5py.File(fname, mode="r+")
-    root = bag.require_group("/BAG_root")
-    del bag["/BAG_root/metadata"]
-    metadata = np.array(list(xmet), dtype="S1")
-    root.create_dataset("metadata",
-                        maxshape=(None,),
-                        data=metadata,
-                        compression="gzip",
-                        compression_opts=9
-                        )
-    bag.close()
+    write_metadata(fname, updated_metadata(fname, new_points, wkt_h, wkt_v))
     return
 
 
@@ -575,12 +656,12 @@ def update_vr_refinements(fname: str,
     # failed transformation leaves the file unchanged.
     zt = base_grid_point_transform(fname=fname, tf=tf, nodata_value=vrb_enum.NDV_REF.value)
     x1, y1, x2, y2 = corner_points(fname=fname)
-    # _, y1, x1, _ = tf.transform_points([y1], [x1], [0], always_xy=False, allow_ballpark=False)
-    # _, y2, x2, _ = tf.transform_points([y2], [x2], [0], always_xy=False, allow_ballpark=False)
-    success1, x1, y1, _ = tf.transform_points([y1], [x1], [0],
-                                              always_xy=False, allow_ballpark=False)
-    success2, x2, y2, _ = tf.transform_points([y2], [x2], [0],
-                                              always_xy=False, allow_ballpark=False)
+    # The metadata stores the corners as x,y (easting,northing for projected CRSs), so use
+    # always_xy: with the CRS's own axis order, swapping them only suits a lat/lon CRS.
+    success1, x1, y1, _ = tf.transform_points([x1], [y1], [0],
+                                              always_xy=True, allow_ballpark=False)
+    success2, x2, y2, _ = tf.transform_points([x2], [y2], [0],
+                                              always_xy=True, allow_ballpark=False)
     if not (success1 and success2):
         raise ValueError(f"Point transformation of the VR BAG corner points failed for {fname}.")
     # using old WKT1_GDAL for compatibility with older GDAL/QGIS. Some CRSs (EPSG:6319,
@@ -593,6 +674,10 @@ def update_vr_refinements(fname: str,
         wkt_v = ""
     wkt_h = wkt_h if wkt_h else ""
     wkt_v = wkt_v if wkt_v else ""
+    xmet = updated_metadata(fname=fname,
+                            new_points=f"{x1[0]},{y1[0]} {x2[0]},{y2[0]}",
+                            wkt_h=wkt_h,
+                            wkt_v=wkt_v)
 
     print("\nUpdating varres_refinements layer...\n")
     bag = h5py.File(fname, "r+")
@@ -621,11 +706,7 @@ def update_vr_refinements(fname: str,
     bag.close()
     # update the base grid and its attributes
     update_vr_elevation(fname=fname, arr=zt)
-    change_corner_points_and_wkt(fname=fname,
-                                 new_points=f"{x1[0]},{y1[0]} {x2[0]},{y2[0]}",
-                                 wkt_h=wkt_h,
-                                 wkt_v=wkt_v
-                                 )
+    write_metadata(fname, xmet)
     return
 
 
