@@ -384,6 +384,18 @@ def nwld_ITRF2020_steps(h0: str, v0: Optional[str], h1: str, v1: Optional[str]):
     return steps
 
 
+# PROJ treats WGS 84 and its G2139 realization as the same coordinates: the operation
+# between them is a no-op, which fails step validation. Steps use the G2139 realization,
+# which has a real transformation to NAD83(2011).
+WGS84_G2139 = {"EPSG:4326": "EPSG:9755", "EPSG:4979": "EPSG:9754"}
+NAD83_2011 = ("EPSG:6318", "EPSG:6319")
+
+
+def _is_3d(crs: str) -> bool:
+    c = pp.CRS(crs)
+    return c.is_geocentric or len(c.axis_info) == 3
+
+
 def nwld_NAD832011_steps(h0: str, v0: Optional[str], h1: str, v1: Optional[str]):
     """
     Generate a general sequence of transformation steps from
@@ -401,6 +413,21 @@ def nwld_NAD832011_steps(h0: str, v0: Optional[str], h1: str, v1: Optional[str])
     elif h0 not in NAD83_geo:
         steps.append({"crs_from": h0, "crs_to": ":".join(pp.CRS(h0).geodetic_crs.to_authority()), "v_shift": False})
     
+    # A geographic input can get a no-op first step above, which fails step validation:
+    # a CRS that is its own geodetic CRS (EPSG:9755 -> EPSG:9755), or WGS 84, which is the
+    # same coordinates as WGS 84 (G2139) (EPSG:4326 -> EPSG:9755). Drop it, and add the
+    # shift to NAD83(2011) if no other step does it.
+    if steps:
+        first_from, first_to = (WGS84_G2139.get(c, c)
+                                for c in (steps[0]["crs_from"], steps[0]["crs_to"]))
+        if first_from == first_to:
+            steps.pop(0)
+    if not steps and h0 not in NAD83_geo:
+        h0_start = WGS84_G2139.get(h0, h0)
+        h0_end = "EPSG:6319" if _is_3d(h0_start) else "EPSG:6318"
+        if h0_start not in NAD83_2011:
+            steps.append({"crs_from": h0_start, "crs_to": h0_end, "v_shift": False})
+
     # Registry limitation: if input vert was in ft, change to m first, before any vertical shift ops
     v0_meter = get_meter_vcrs(v0)
     if v0_meter and v0_meter != v0:
@@ -442,4 +469,13 @@ def nwld_NAD832011_steps(h0: str, v0: Optional[str], h1: str, v1: Optional[str])
         steps.append({"crs_from": "EPSG:9755", "crs_to": h1, "v_shift": False})
     elif h1 not in NAD83_geo:
         steps.append({"crs_from": "EPSG:6318", "crs_to": h1, "v_shift": False})
+    # Same for the output: end at WGS 84 (G2139) instead of WGS 84. From G2139 to WGS 84 is a
+    # no-op (EPSG:9755 -> EPSG:4326), and NAD83(2011) to 3D WGS 84 has no usable operation.
+    if steps and not steps[-1]["v_shift"]:
+        last = steps[-1]
+        to = WGS84_G2139.get(last["crs_to"], last["crs_to"])
+        if to == last["crs_from"]:
+            steps.pop()
+        elif to != last["crs_to"]:
+            steps[-1] = {**last, "crs_to": to}
     return steps
