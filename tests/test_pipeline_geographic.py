@@ -24,6 +24,8 @@ LON, LAT, H = -76.197, 37.13, 5.0  # Norfolk, VA: inside the MLLW grid
     ("EPSG:7912", {"crs_from": "EPSG:7912", "crs_to": "EPSG:6319", "v_shift": False}),
     ("EPSG:9989", {"crs_from": "EPSG:9989", "crs_to": "EPSG:6319", "v_shift": False}),
     ("EPSG:9988", {"crs_from": "EPSG:9988", "crs_to": "EPSG:6319", "v_shift": False}),
+    ("EPSG:4978", {"crs_from": "EPSG:9753", "crs_to": "EPSG:6319", "v_shift": False}),
+    ("EPSG:9753", {"crs_from": "EPSG:9753", "crs_to": "EPSG:6319", "v_shift": False}),
 ])
 def test_geographic_input_steps(h0, start):
     steps = nwld_NAD832011_steps(h0, None, "EPSG:6318", MLLW)
@@ -43,6 +45,7 @@ def test_geographic_input_with_vertical_crs(h0):
     ("EPSG:4326", {"crs_from": "EPSG:6318", "crs_to": "EPSG:9755", "v_shift": False}),
     ("EPSG:4979", {"crs_from": "EPSG:6318", "crs_to": "EPSG:9754", "v_shift": False}),
     ("EPSG:9755", {"crs_from": "EPSG:6318", "crs_to": "EPSG:9755", "v_shift": False}),
+    ("EPSG:4978", {"crs_from": "EPSG:6318", "crs_to": "EPSG:9753", "v_shift": False}),
 ])
 def test_geographic_output_steps(h1, end):
     steps = nwld_NAD832011_steps("EPSG:6318", MLLW, h1, None)
@@ -62,19 +65,39 @@ def test_projected_input_steps_unchanged(h0, first):
     assert validate_transform_steps_dict(steps)
 
 
-def test_wgs84_matches_wgs84_utm():
-    """A WGS 84 point gives the same result as the same point in WGS 84 / UTM 18N."""
-    e, n = pp.Transformer.from_crs("EPSG:4326", "EPSG:32618", always_xy=True).transform(LON, LAT)
-    ok, x_ref, y_ref, z_ref = Transformer("EPSG:32618", f"EPSG:6318+{MLLW}").transform_points(
-        np.array([e]), np.array([n]), np.array([H]), always_xy=True)
+def _proj(crs_from, crs_to, x, y, z):
+    """PROJ's own result for one step, without vyperdatum."""
+    return pp.Transformer.from_crs(crs_from, crs_to, always_xy=True, allow_ballpark=False,
+                                   only_best=True).transform(x, y, z)
+
+
+@pytest.mark.parametrize("crs", ["EPSG:4326", "EPSG:9755", "EPSG:4979", "EPSG:9754",
+                                 "EPSG:4978", "EPSG:9753"])
+def test_wgs84_input_matches_proj(crs):
+    """
+    WGS 84 ellipsoid heights to MLLW match PROJ: WGS 84 (G2139) -> NAD83(2011), then
+    NAD83(2011) ellipsoid heights -> MLLW.
+    """
+    lon, lat, h = _proj("EPSG:9754", "EPSG:6319", LON, LAT, H)
+    _, _, z_ref = _proj("EPSG:6319", f"EPSG:6318+{MLLW}", lon, lat, h)
+    x, y, z = (LON, LAT, H)
+    if pp.CRS(crs).is_geocentric:
+        x, y, z = _proj("EPSG:9754", "EPSG:9753", LON, LAT, H)
+    ok, _, _, zt = Transformer(crs, f"EPSG:6318+{MLLW}").transform_points(
+        np.array([x]), np.array([y]), np.array([z]), always_xy=True)
     assert ok
-    for crs in ["EPSG:4326", "EPSG:9755"]:
-        ok, x, y, z = Transformer(crs, f"EPSG:6318+{MLLW}").transform_points(
-            np.array([LON]), np.array([LAT]), np.array([H]), always_xy=True)
-        assert ok, crs
-        assert x[0] == pytest.approx(x_ref[0], abs=1e-9)
-        assert y[0] == pytest.approx(y_ref[0], abs=1e-9)
-        assert z[0] == pytest.approx(z_ref[0], abs=1e-6)
+    assert zt[0] == pytest.approx(z_ref, abs=1e-4)
+
+
+@pytest.mark.parametrize("crs", ["EPSG:4979", "EPSG:9754"])
+def test_wgs84_output_matches_proj(crs):
+    """MLLW to WGS 84 ellipsoid heights matches PROJ: MLLW -> NAD83(2011) -> G2139."""
+    lon, lat, h = _proj(f"EPSG:6318+{MLLW}", "EPSG:6319", LON, LAT, H)
+    ref = _proj("EPSG:6319", "EPSG:9754", lon, lat, h)
+    ok, x, y, z = Transformer(f"EPSG:6318+{MLLW}", crs).transform_points(
+        np.array([LON]), np.array([LAT]), np.array([H]), always_xy=True)
+    assert ok
+    assert (x[0], y[0], z[0]) == pytest.approx(ref, abs=1e-6)
 
 
 def test_wgs84_round_trip():

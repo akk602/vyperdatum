@@ -387,7 +387,7 @@ def nwld_ITRF2020_steps(h0: str, v0: Optional[str], h1: str, v1: Optional[str]):
 # PROJ treats WGS 84 and its G2139 realization as the same coordinates: the operation
 # between them is a no-op, which fails step validation. Steps use the G2139 realization,
 # which has a real transformation to NAD83(2011).
-WGS84_G2139 = {"EPSG:4326": "EPSG:9755", "EPSG:4979": "EPSG:9754"}
+WGS84_G2139 = {"EPSG:4326": "EPSG:9755", "EPSG:4979": "EPSG:9754", "EPSG:4978": "EPSG:9753"}
 NAD83_2011 = ("EPSG:6318", "EPSG:6319")
 
 
