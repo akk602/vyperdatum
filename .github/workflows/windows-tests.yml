@@ -12,6 +12,8 @@ env:
   BRANCHES: >-
     feature/ngvd29-nad27-support fix/auto-steps-noop fix/transform-points-finally-cleanup
     fix/vrbag-all-subgrids fix/callers-check-success-v2 fix/out-of-coverage-points-v2
+    fix/wgs84-auto-steps fix/vdatum-check-small-input fix/vrbag-remove-failed-output
+    fix/vrbag-metadata
 
 jobs:
   grids:
@@ -52,6 +54,10 @@ jobs:
           - fix/vrbag-all-subgrids
           - fix/callers-check-success-v2
           - fix/out-of-coverage-points-v2
+          - fix/wgs84-auto-steps
+          - fix/vdatum-check-small-input
+          - fix/vrbag-remove-failed-output
+          - fix/vrbag-metadata
           - combined
     runs-on: ${{ matrix.os }}
     defaults:
